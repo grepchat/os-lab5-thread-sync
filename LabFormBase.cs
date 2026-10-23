@@ -41,7 +41,7 @@ abstract class LabFormBase : Form
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(width, stageHeight + controlsHeight + 190);
+        ClientSize = new Size(width, stageHeight + controlsHeight + 190 + 25);
 
         StageHost.Height = stageHeight;
         ControlsPanel.Height = controlsHeight;
@@ -59,11 +59,19 @@ abstract class LabFormBase : Form
         var strip = new StatusStrip { SizingGrip = false };
         strip.Items.Add(_status);
 
+        // возврат в главное меню: закрываем окно задания (потоки при этом завершаются),
+        // а главное окно снова показывается по событию FormClosed (см. MainForm)
+        var toolbar = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
+        var back = new ToolStripButton("← Главное меню") { ToolTipText = "Завершить потоки и вернуться в главное меню" };
+        back.Click += (_, _) => Close();
+        toolbar.Items.Add(back);
+
         // порядок добавления важен для докинга: Fill — первым, верхние панели — последними
         Controls.Add(logGroup);
         Controls.Add(strip);
         Controls.Add(ControlsPanel);
         Controls.Add(StageHost);
+        Controls.Add(toolbar);
         ResumeLayout(false);
 
         UpdateButtons();

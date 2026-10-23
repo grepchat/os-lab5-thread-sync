@@ -40,7 +40,13 @@ sealed class MainForm : Form
     {
         int y = 55 + n * 85;
         var btn = new Button { Text = title, Location = new Point(20, y), Size = new Size(220, 60) };
-        btn.Click += (_, _) => create().Show();
+        btn.Click += (_, _) =>
+        {
+            var task = create();
+            task.FormClosed += (_, _) => Show();   // возврат в главное меню
+            Hide();
+            task.Show();
+        };
         Controls.Add(btn);
         Controls.Add(new Label
         {
