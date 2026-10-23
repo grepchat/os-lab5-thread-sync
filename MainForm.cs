@@ -17,7 +17,7 @@ sealed class MainForm : Form
 
         Controls.Add(new Label
         {
-            Text = "Средства синхронизации потоков и их реализация (вместо Delphi — C#, WinForms)",
+            Text = "Средства синхронизации потоков и их реализация",
             Location = new Point(20, 15), AutoSize = true, Font = new Font(Font, FontStyle.Bold),
         });
 
