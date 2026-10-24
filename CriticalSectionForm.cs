@@ -16,9 +16,19 @@ namespace Lab5Sync;
 /// </summary>
 sealed class CriticalSectionForm : LabFormBase
 {
+    // БЫЛО:
+    // const double StepMs = 1.5;   // процессорное время на один шаг (1 пиксель) движения
+    // СТАЛО:
     const double StepMs = 8;     // процессорное время на один шаг (2 пикселя) движения
 
     readonly Stage _stage = new() { Dock = DockStyle.Fill, BackColor = Color.Aqua };
+    // БЫЛО: обе машины на одной дорожке
+    // readonly Car[] _cars =
+    // {
+    //     new("Поток 1 (жёлтое такси)", Color.Gold, 24),
+    //     new("Поток 2 (красное такси)", Color.OrangeRed, 24),
+    // };
+    // СТАЛО: каждая машина на своей дорожке того же компонента
     readonly Car[] _cars =
     {
         new("Поток 1 (жёлтое такси)", Color.Gold, 36),
@@ -27,12 +37,29 @@ sealed class CriticalSectionForm : LabFormBase
     readonly Label[] _carState = new Label[2];
     readonly AnimThread[] _threads = new AnimThread[2];
     readonly TrackBar[] _prio = new TrackBar[2];
+    // БЫЛО: полей _portion и _portionPx не было
+    // СТАЛО:
     readonly NumericUpDown[] _portion = new NumericUpDown[2];
     readonly int[] _portionPx = { 80, 240 };   // участок пути за один вход в критическую секцию
 
     object _c;                 // критическая секция (общая для обоих потоков)
     volatile int _owner;       // номер потока, находящегося в критической секции (0 — свободна)
 
+    // БЫЛО:
+    // public CriticalSectionForm()
+    //     : base("5.2.1. Синхронизация потоков с помощью критических секций (Monitor / lock)", 820, 100, 150)
+    // {
+    //     StageHost.Controls.Add(_stage);
+    //     _stage.Paint += StagePaint;
+    //
+    //     _prio[0] = AddPriorityTrack("Приоритет потока 1 (жёлтое такси):", 10, 6, () => _threads[0]);
+    //     _prio[1] = AddPriorityTrack("Приоритет потока 2 (красное такси):", 10, 72, () => _threads[1]);
+    //     _carState[0] = AddLabel("Поток 1: не запущен", 360, 30);
+    //     _carState[1] = AddLabel("Поток 2: не запущен", 360, 96);
+    //     PinBox.Location = new Point(360, 6);
+    //     ControlsPanel.Controls.Add(PinBox);
+    // }
+    // СТАЛО: область рисования выше (две дорожки), для каждой машины — поле «Участок пути»
     public CriticalSectionForm()
         : base("5.2.1. Синхронизация потоков с помощью критических секций (Monitor / lock)", 820, 180, 155)
     {
@@ -57,6 +84,10 @@ sealed class CriticalSectionForm : LabFormBase
     void StagePaint(object sender, PaintEventArgs e)
     {
         var g = e.Graphics;
+        // БЫЛО: одна дорога внизу
+        // g.FillRectangle(Brushes.DimGray, 0, _stage.Height - 18, _stage.Width, 18);
+        // foreach (var car in _cars) car.Draw(g, Font);
+        // СТАЛО: дорога под каждой машиной
         foreach (var car in _cars)
         {
             g.FillRectangle(Brushes.DimGray, 0, car.Y + Sprites.CarH, _stage.Width, 4);
@@ -72,6 +103,9 @@ sealed class CriticalSectionForm : LabFormBase
         for (int k = 0; k < 2; k++)
         {
             int idx = k;
+            // БЫЛО: машина ждала за левым краем экрана
+            // _cars[k].X = -1000;
+            // СТАЛО: машина стоит в начале дороги
             _cars[k].X = 0;
             _cars[k].GoingRight = true;
             _cars[k].Tag = null;
@@ -86,12 +120,51 @@ sealed class CriticalSectionForm : LabFormBase
         _c = null;           // c.Free
         _owner = 0;
         _threads[0] = _threads[1] = null;
-        foreach (var car in _cars) car.Tag = null;
+        foreach (var car in _cars) car.Tag = null;   // СТАЛО: добавлено (надписи над машинами)
         SetCarState(0, "завершён");
         SetCarState(1, "завершён");
         _stage.Invalidate();
     }
 
+    // БЫЛО: за один вход в критическую секцию машина проезжала весь экран
+    // /// <summary>TMoveThread.Execute</summary>
+    // void Execute(AnimThread t, int k)
+    // {
+    //     var car = _cars[k];
+    //     int w = Sprites.CarW;
+    //     while (true)
+    //     {
+    //         // едем вправо
+    //         EnterSection(t, k);
+    //         try
+    //         {
+    //             for (int i = -w; i <= _stage.SafeWidth; i += 2)
+    //             {
+    //                 int x = i;
+    //                 t.Synchronize(() => { car.GoingRight = true; car.X = x; _stage.Invalidate(); });   // DoVisualSwap
+    //                 t.Work(StepMs);
+    //             }
+    //         }
+    //         finally { LeaveSection(t, k); }
+    //         t.Sleep(30);   // пауза вне критической секции — даёт второму потоку войти в неё
+    //
+    //         // едем влево
+    //         EnterSection(t, k);
+    //         try
+    //         {
+    //             for (int i = _stage.SafeWidth; i >= -w; i -= 2)
+    //             {
+    //                 int x = i;
+    //                 t.Synchronize(() => { car.GoingRight = false; car.X = x; _stage.Invalidate(); });  // DoVisual
+    //                 t.Work(StepMs);
+    //             }
+    //         }
+    //         finally { LeaveSection(t, k); }
+    //         t.Sleep(30);
+    //     }
+    // }
+
+    // СТАЛО:
     /// <summary>TMoveThread.Execute: за каждый вход в критическую секцию — свой участок пути.</summary>
     void Execute(AnimThread t, int k)
     {
@@ -128,16 +201,25 @@ sealed class CriticalSectionForm : LabFormBase
         if (!Monitor.TryEnter(_c))
         {
             SetCarState(k, "ЖДЁТ: критическая секция занята другим потоком");
-            SetTag(k, "ждёт критическую секцию", Color.Firebrick);
+            SetTag(k, "ждёт критическую секцию", Color.Firebrick);   // СТАЛО: добавлено
             Log($"{t.Name}: критическая секция занята, ожидание...");
             Monitor.Enter(_c);   // c.Enter — ждём бесконечно, без тайм-аута
         }
         _owner = k + 1;
         SetCarState(k, "в критической секции (едет)");
-        SetTag(k, "в критической секции — едет", Color.DarkGreen);
+        SetTag(k, "в критической секции — едет", Color.DarkGreen);   // СТАЛО: добавлено
         Log($"{t.Name}: вошёл в критическую секцию (Enter)");
     }
 
+    // БЫЛО: запись в журнал делалась после выхода из секции
+    // void LeaveSection(AnimThread t, int k)
+    // {
+    //     _owner = 0;
+    //     Monitor.Exit(_c);        // c.Leave — в finally, т.е. освобождается при любом выходе
+    //     SetCarState(k, "вне критической секции");
+    //     Log($"{t.Name}: покинул критическую секцию (Leave)");
+    // }
+    // СТАЛО:
     void LeaveSection(AnimThread t, int k)
     {
         _owner = 0;
@@ -149,6 +231,7 @@ sealed class CriticalSectionForm : LabFormBase
 
     void SetCarState(int k, string s) => Post(() => _carState[k].Text = $"Поток {k + 1}: {s}");
 
+    // СТАЛО: новый метод — надпись над машиной
     void SetTag(int k, string tag, Color color) => Post(() =>
     {
         _cars[k].Tag = tag;
