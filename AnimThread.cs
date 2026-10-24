@@ -101,6 +101,18 @@ sealed class AnimThread
         return false;
     }
 
+    /// <summary>Ожидание любого из объектов (аналог WaitForMultipleObjects):
+    /// индекс сработавшего объекта или -1 по тайм-ауту.</summary>
+    public int WaitAny(int timeoutMs, params WaitHandle[] handles)
+    {
+        var all = new WaitHandle[handles.Length + 1];
+        handles.CopyTo(all, 0);
+        all[^1] = _stopEvent;
+        int r = WaitHandle.WaitAny(all, timeoutMs);
+        if (r == handles.Length) throw new StopSignal();
+        return r == WaitHandle.WaitTimeout ? -1 : r;
+    }
+
     public void Sleep(int ms)
     {
         if (_stopEvent.WaitOne(ms)) throw new StopSignal();

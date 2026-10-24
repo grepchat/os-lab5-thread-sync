@@ -11,6 +11,10 @@ namespace Lab5Sync;
 ///   WaitForSingleObject(h0, 200)             -> sem.WaitOne(200);
 ///   ReleaseSemaphore(h0, 1, nil)             -> sem.Release();
 ///   CloseHandle(fsemaphore)                  -> sem.Dispose().
+///
+/// Лимит капель можно менять во время работы. Максимум семафора (10) задаётся один раз
+/// при создании, а число «мест» меняет поток-регулятор: чтобы добавить места, он вызывает
+/// Release(n), чтобы убрать — сам захватывает лишние места WaitOne и не отдаёт их.
 /// </summary>
 sealed class SemaphoreForm : LabFormBase
 {
@@ -34,8 +38,11 @@ sealed class SemaphoreForm : LabFormBase
     readonly Label _insideLbl;
 
     Semaphore _semaphore;           // fsemaphore
-    int _maxInUse;
+    volatile int _maxInUse;         // лимит, заданный пользователем
+    volatile int _permits;          // сколько мест сейчас реально есть в семафоре
     int _inside;
+    AnimThread _governor;           // поток-регулятор числа мест
+    readonly AutoResetEvent _limitChanged = new(false);
 
     public SemaphoreForm()
         : base("5.2.4. Синхронизация потоков с помощью объектов типа «Семафор»", 840, 374, 112)
@@ -50,6 +57,7 @@ sealed class SemaphoreForm : LabFormBase
         _sleepMs = AddNumeric(260, 10, 0, 20000, 2000, 100);
         AddLabel("Максимальное кол-во падающих капель:", 10, 44);
         _maxCount = AddNumeric(260, 42, 1, ThreadCount, 7);
+        _maxCount.ValueChanged += (_, _) => ChangeLimit((int)_maxCount.Value);
         _insideLbl = AddLabel("Сейчас падает капель: 0", 10, 80);
 
         _btnSleep.Location = new Point(840 - 165, 78);
@@ -88,6 +96,7 @@ sealed class SemaphoreForm : LabFormBase
     protected override void CreateSyncAndThreads()
     {
         _maxInUse = (int)_maxCount.Value;                          // max_count := SpinEdit1.Value
+        _permits = _maxInUse;
         _semaphore = new Semaphore(_maxInUse, ThreadCount);        // CreateSemaphore(nil, max_count, 10, nil)
         Log($"Создан семафор: начальный счётчик = {_maxInUse}, максимум = {ThreadCount}");
         _inside = 0;
@@ -99,11 +108,16 @@ sealed class SemaphoreForm : LabFormBase
             AddThread(t);
             t.Priority = ThreadPriority.Lowest;                    // tpLowest
         }
+        _governor = new AnimThread("Регулятор", this, Governor) { Log = Log };
+        _governor.Start();
         UpdateInside();
     }
 
     protected override void DestroySync()
     {
+        _governor?.RequestStop();
+        _governor?.Join(2000);
+        _governor = null;
         _semaphore?.Dispose();                                     // CloseHandle(fsemaphore)
         _semaphore = null;
         for (int k = 0; k < ThreadCount; k++) _drops[k] = new DropState();
@@ -115,8 +129,54 @@ sealed class SemaphoreForm : LabFormBase
 
     void UpdateInside()
     {
-        string max = _semaphore == null ? "" : $" (не более {_maxInUse} одновременно)";
+        string max = _semaphore == null ? ""
+            : _permits > _maxInUse ? $" (лимит уменьшается до {_maxInUse}: ждём, пока капли долетят)"
+            : $" (не более {_maxInUse} одновременно)";
         _insideLbl.Text = $"Сейчас падает капель: {Volatile.Read(ref _inside)}{max}";
+    }
+
+    /// <summary>Изменение «Максимального кол-ва падающих капель» во время работы.</summary>
+    void ChangeLimit(int limit)
+    {
+        _maxInUse = limit;
+        if (_semaphore == null) return;   // потоки не запущены — значение возьмётся при Start
+        Log($"Новый лимит падающих капель: {limit}");
+        _limitChanged.Set();
+        UpdateInside();
+    }
+
+    /// <summary>
+    /// Поток-регулятор: приводит число мест в семафоре к лимиту, заданному пользователем.
+    /// Увеличение — сразу (Release). Уменьшение — по мере того, как капли освобождают места:
+    /// регулятор забирает освободившееся место себе (WaitOne) и не возвращает его.
+    /// </summary>
+    void Governor(AnimThread t)
+    {
+        while (true)
+        {
+            int target = _maxInUse;
+            if (_permits < target)
+            {
+                _semaphore.Release(target - _permits);
+                Log($"Регулятор: Release({target - _permits}) — мест в семафоре стало {target}");
+                _permits = target;
+                Post(UpdateInside);
+            }
+            else if (_permits > target)
+            {
+                // ждём, пока какая-нибудь капля освободит место, или пока лимит снова не изменится
+                if (t.WaitAny(Timeout.Infinite, _semaphore, _limitChanged) == 0)
+                {
+                    _permits--;
+                    Log($"Регулятор: забрал одно место — мест в семафоре стало {_permits}");
+                    Post(UpdateInside);
+                }
+            }
+            else
+            {
+                t.Wait(_limitChanged, Timeout.Infinite);
+            }
+        }
     }
 
     /// <summary>DoVisual: показать кадр ведра i и перейти к следующему.</summary>
